@@ -11,16 +11,23 @@
 args = commandArgs(TRUE)
 file = args[1]
 output = args[2]
+color = args[3]
+
+library(gplots)
+
 
 data = read.table(file)
 metaData = as.matrix(data[,2:ncol(data)])
 
-colorSpectrum <- colorRampPalette(c("white","red"))(100)
-minValue <- quantile(metaData,na.rm=TRUE,prob=0.3,names=FALSE)
-maxValue <- quantile(metaData,na.rm=TRUE,prob=0.90,names=FALSE)
-color_cuts <- seq(minValue,maxValue,length=100)
-color_cuts <- c(0, color_cuts,max(metaData))
+colorSpectrum <- colorRampPalette(c("white",color))(100)
+minValue=0
+maxValue=max(metaData)/25
+color_cuts <- seq(minValue,maxValue,length=101)
 
 pdf(output)
-heatmap(metaData, Rowv=NA, Colv=NA, labRow=NA, labCol=NA, col=colorSpectrum)
+heatmap.2(metaData, dendrogram='none', Rowv=FALSE, Colv=FALSE,
+          trace='none', col=colorSpectrum, scale='none',
+          labRow=c(), labCol=c(), breaks=color_cuts)
 dev.off()
+
+
