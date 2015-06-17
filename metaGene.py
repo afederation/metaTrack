@@ -7,99 +7,123 @@ import subprocess
 import numpy
 
 
-## For each locus, find the flanking region and divide it into 250 regions
 
 
-def createRegionLoci(regionsLoci, extension, projectFolder, projectName):
+def convertBEDtoGFF(regionsFile, extension, nbins, projectFolder, projectName):
+    '''
+    Take BED file from import
+    Extend and divide each region given the paramaters
+    Output a GFF with divided regions
+    '''
+
+    regionsTable = utils.parseTable(regionsFile, '\t')
+
+    gff = []
+    gffFilename = projectFolder + projectName + '_meta_regions.gff'
     
-    outputLoci = []
-    locationToLocusDict = {}
-
-    for locus in regionsLoci:
+    counter = 0
+    for line in regionsTable[:10000]:
         
-        location = locus.chr() + ':' + str(locus.start()) + '-' + str(locus.end())
+        print counter
+        counter += 1
 
-        newlocus = utils.makeSearchLocus(locus, extension, extension)
+        chrom = line[0]
+        coords = (int(line[1]),  int(line[2]))
+        start = min(coords)
+        end = max(coords)
+
+        # Check to see if additional information is present 
+        try:
+            name = line[3]
+        except IndexError:
+            name = projectName + '_' + str(counter)
+
+        try:
+            strand = line[5]
+        except IndexError:
+            strand = '.'
+
+
+        regionLength = (end+extension) - (start-extension) 
+        binLength = int(float(regionLength)/nbins)
         
-        outputLoci.append(newlocus)
-        locationToLocusDict[location] = locus
+        newStart = (start-extension)
+        alternate = 1
+        for n in range(nbins):
 
-    return outputLoci, locationToLocusDict
+            ID = name + '|' + str(n)
 
-def rankRegionsByAnchor(locationToLocusDict, anchorBam, numberRegions, projectFolder, projectName):
+            if alternate == 1:
+                newEnd = newStart + binLength
+            if alternate == -1:
+                newEnd = newStart + binLength + 1
+
+
+            gffLine = [chrom, ID, 'region', newStart, newEnd, 0, strand, '.', 1]
+
+            newStart = newEnd
+            alternate *= (-1)
+            
+            gff.append(gffLine)
+
+    utils.unParseTable(gff, gffFilename, '\t')
+    return gffFilename
+
+
+def callBamliquidator(regionsGFFfile, projectFolder, namesList, bamList):
+
+    for i in range(len(namesList)):
+
+        name = namesList[i]
+        bamFile = bamList[i]
+
+        bamliquidatorFolder = projectFolder + name + '_liquidate/'
+        utils.formatFolder(bamliquidatorFolder, True)
+
+        mappingCmd = 'bamliquidator_batch'
+        mappingCmd += ' -r ' + regionsGFFfile
+        mappingCmd += ' -o ' + bamliquidatorFolder
+        mappingCmd += ' -m -e 200 '
+        mappingCmd += bamFile
+
+        subprocess.call(mappingCmd, shell=True)
     
-    print 'Ranking regions by anchor BAM'
+def parseBamliquidator(projectFolder, projectName, namesList, anchor, nbins):
 
-    scoreDict = {}
+    for name in namesList:
+
+        bamliquidatorFile = projectFolder + name + '_liquidate/matrix.txt'
     
-    # Find the total number of reads in each region
+        parsedReads = []
+        signalDict = {}
+        dataDict = {}
 
-    for location in locationToLocusDict:
+        data = utils.parseTable(bamliquidatorFile, '\t')
+           
+        for line in data[1:]:
+                
+            IDstring = line[0].split('|')
+            
+            ID = IDstring[0]
 
-        locus = locationToLocusDict[location]
+            if ID not in signalDict:
+                signalDict[ID] = 0
+                dataDict[ID] = []
+            signalDict[ID] += float(line[2])
+            dataDict[ID].append(float(line[2]))
 
-        bamliquidatorCmd = 'bamliquidator %s %s %s %s . 1 200' % (anchorBam, locus.chr(),
-                                                                  str(locus.start()), str(locus.end()))
-
-        bamliquidatorOut = subprocess.Popen(bamliquidatorCmd, stdout = subprocess.PIPE, shell=True)
-        score = bamliquidatorOut.communicate()[0]
-        scoreDict[location] = int(score)
-
-    # Rank the regions by the score and store in a dictionary
-    
-    allLocations = locationToLocusDict.keys()
-    sortedLocations = sorted(allLocations, key=lambda x: scoreDict[x], reverse=True)
-    
-    rankDict = dict(zip(range(numberRegions), sortedLocations))
-    
-    return rankDict
-
-def mapBamsToRegions(bamList, namesList, nbins, numberRegions, rankDict, locationToLocusDict, projectFolder, projectName):
-
-    print 'Mapping BAMs to Regions'
-
-    for b in range(len(bamList)):
-
-        bam = bamList[b]
-        sampleName = namesList[b]
+        if name == anchor:
+            sortedID = sorted(signalDict.keys(), key=lambda x: signalDict[x], reverse=True)
 
         header = ['Region'] + range(nbins+1)[1:]
-        data = [header]
+        output = [header]
+        outputName = projectFolder + projectName + '_' + name + '_metaData.txt'
 
-        counter = 0
+        for ID in sortedID:
+            output.append([ID] + dataDict[ID])
 
-        for rank in range(numberRegions):
-            
-            counter += 1
-            if counter%1000 == 0:
-                print counter
+        utils.unParseTable(output, outputName, '\t')
 
-            location = rankDict[rank]
-            locus = locationToLocusDict[location]
-
-            coords = (int(locus.start()), int(locus.end()))
-            start = min(coords)
-            stop = max(coords)
-
-        
-            cmd = ('bamliquidator ' + bam + ' ' + locus.chr() + ' ' + str(locus.start()) + ' '
-                  + str(locus.end()) + ' . ' + str(nbins) + ' 0')
-
-            bamliquidatorOut = subprocess.Popen(cmd, stdout = subprocess.PIPE, shell=True)
-            rawOut = bamliquidatorOut.communicate()[0]
-            binnedData = rawOut.split('\n')
-            regionData = []
-
-            for y in binnedData:
-                if y != '':
-                    regionData.append(int(y))
-                else:
-                    regionData.append(0)
-
-            data.append(regionData)
-    
-        dataFilename = projectFolder + projectName + '_' + sampleName + '_metaData.txt'
-        utils.unParseTable(data, dataFilename, '\t')
 
 def makeGraphs(namesList, projectFolder, projectName):
 
@@ -157,9 +181,7 @@ def main():
         # Collect all the arguments
 
         regionsFile = options.regions
-        regionsTable = utils.parseTable(regionsFile, '\t')
-        regionsLoci = [utils.Locus(x[0], x[1], x[2], '.') for x in regionsTable]
-        numberRegions = len(regionsLoci)
+
 
         projectFolder = options.projectFolder
         if projectFolder[-1] != '/':
@@ -174,14 +196,13 @@ def main():
 
         anchor = options.anchor
 
-        nbins = options.bins
-        extension = options.extend
+        nbins = int(options.bins)
+        extension = int(options.extend)
         colors = options.colors.split(',')
 
-        try:
-            anchorIndex = namesList.index(anchor)
-        except ValueError:
-            print 'ERROR: invalid anchor name'
+
+        anchorIndex = namesList.index(anchor)
+
         
         # Re-order the names and bams to put the anchor sample first
 
@@ -196,12 +217,9 @@ def main():
 
         # Run the functions
 
-        extendedLoci, locationToLocusDict = createRegionLoci(regionsLoci, extension, projectFolder, projectName)
-        
-        rankDict = rankRegionsByAnchor(locationToLocusDict, anchorBam, numberRegions, projectFolder, projectName)
-
-        mapBamsToRegions(bamList, namesList, nbins, numberRegions, rankDict, locationToLocusDict, projectFolder, projectName)
-
+        regionsGFFfile = convertBEDtoGFF(regionsFile, extension, nbins, projectFolder, projectName)
+        callBamliquidator(regionsGFFfile, projectFolder, namesList, bamList)
+        parseBamliquidator(projectFolder, projectName, namesList, anchor, nbins)
         makeGraphs(namesList, projectFolder, projectName)
 
     else:
