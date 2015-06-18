@@ -22,7 +22,7 @@ def convertBEDtoGFF(regionsFile, extension, nbins, projectFolder, projectName):
     gffFilename = projectFolder + projectName + '_meta_regions.gff'
     
     counter = 0
-    for line in regionsTable[:10000]:
+    for line in regionsTable:
         
         print counter
         counter += 1
@@ -134,7 +134,7 @@ def makeGraphs(namesList, projectFolder, projectName):
         pdfFilename = projectFolder + projectName + '_' + sampleName + '_metaPlot.pdf'
         os.system('Rscript metaPlot.R ' + dataFilename + ' ' + pdfFilename)
 
-        pdfFilename = projectFolder + projectName + '_' + sampleName + '_heatmap.pdf'
+        pdfFilename = projectFolder + projectName + '_' + sampleName + '_heatmap.png'
         os.system('Rscript heatmapPlot.R ' + dataFilename + ' ' + pdfFilename + ' red')
 
 
